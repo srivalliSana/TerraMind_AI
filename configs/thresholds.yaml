@@ -1,0 +1,26 @@
+# Risk / alert thresholds.
+# These are ENGINEERING DEFAULTS chosen to be conservative and tunable.
+# They are NOT scientifically validated universal rules and must be calibrated
+# per crop and region against field observations.
+validated: false
+
+anomaly:
+  zscore_watch: -1.5         # deviation from the seasonal baseline, in standard deviations
+  zscore_elevated: -2.0
+  zscore_high: -3.0
+  min_persistence_obs: 2     # consecutive anomalous observations to count as sustained
+
+affected_area:
+  min_fraction_watch: 0.05
+  min_fraction_elevated: 0.15
+  min_fraction_high: 0.30
+
+quality:
+  min_valid_fraction: 0.30
+  low_confidence_below: 0.60
+
+risk_categories:             # upper bounds of the 0-100 score
+  informational: 25
+  watch: 50
+  elevated: 75
+  high: 100

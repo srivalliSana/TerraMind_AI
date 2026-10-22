@@ -1,0 +1,15 @@
+# Sensor registry. Only catalog identifiers live here for now.
+# Band mappings, scale factors, offsets and QA bit definitions are intentionally
+# NOT filled in until verified against the official product user guide
+# (see docs/DATA_SOURCES.md). Never guess them.
+sensors:
+  HLSL30:
+    provider: nasa_hls
+    collection_short_name: HLSL30
+    description: Harmonized Landsat-8/9 OLI surface reflectance (30 m)
+    spec_verified: false
+  HLSS30:
+    provider: nasa_hls
+    collection_short_name: HLSS30
+    description: Harmonized Sentinel-2 MSI surface reflectance (30 m)
+    spec_verified: false

@@ -1,0 +1,2 @@
+# Installs the project and its dependencies from pyproject.toml (single source of truth).
+-e .[api,dev]

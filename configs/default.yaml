@@ -1,0 +1,34 @@
+# TerraMind AI - default configuration. Override paths/log level via .env.
+app:
+  name: TerraMind AI
+  demo_mode: true            # dashboard shows clearly labelled sample data when no real data exist
+
+paths:
+  data_dir: data
+  db_path: data/terramind.sqlite
+
+logging:
+  level: INFO
+  file: logs/terramind.log   # set to null to log to console only
+
+search:
+  default_provider: nasa_hls
+  max_results: 50            # hard cap per query; never bulk-download an archive
+  page_size: 50
+  max_cloud_cover: 60        # percent, catalog-level pre-filter only
+
+aoi:
+  max_area_km2: 2500         # processing limit per AOI
+  min_area_km2: 0.01
+  default_crs: EPSG:4326
+
+processing:
+  min_valid_fraction: 0.30   # observations with less valid coverage are excluded from analysis
+  max_workers: 2
+  download_retries: 3
+  chunk_size: 1024
+
+timeseries:
+  min_observations_for_baseline: 5
+  smoothing_window: 3
+  rolling_window: 3

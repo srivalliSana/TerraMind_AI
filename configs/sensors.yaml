@@ -1,15 +1,71 @@
-# Sensor registry. Only catalog identifiers live here for now.
-# Band mappings, scale factors, offsets and QA bit definitions are intentionally
-# NOT filled in until verified against the official product user guide
-# (see docs/DATA_SOURCES.md). Never guess them.
+# Sensor registry. Every value below was checked against the official
+# "HLS User Guide V2.0" (LP DAAC, https://lpdaac.usgs.gov/documents/1698/HLS_User_Guide_V2.pdf),
+# Section 6 (Tables 6, 7, 9) and Table 1. See docs/DATA_SOURCES.md.
+# Do not edit band/QA values without re-checking the product documentation.
 sensors:
   HLSL30:
     provider: nasa_hls
     collection_short_name: HLSL30
-    description: Harmonized Landsat-8/9 OLI surface reflectance (30 m)
-    spec_verified: false
+    description: Harmonized Landsat 8/9 OLI surface reflectance (NBAR), 30 m MGRS tiles
+    spec_verified: true
+    spec_source: HLS User Guide V2.0, Table 6 and Table 1
+    file_pattern: "HLS.L30.{tile}.{datetime}.v2.0.{layer}.tif"
+    resolution_m: 30
+    # semantic name -> layer suffix in the file name (OLI band number in comments)
+    bands:
+      coastal: B01   # OLI 1, 0.43-0.45 um
+      blue: B02      # OLI 2
+      green: B03     # OLI 3
+      red: B04       # OLI 4, 0.64-0.67 um
+      nir: B05       # OLI 5, NIR narrow, 0.85-0.88 um
+      swir1: B06     # OLI 6, 1.57-1.65 um
+      swir2: B07     # OLI 7, 2.11-2.29 um
+    other_layers: {cirrus_toa: B09, tir1_bt: B10, tir2_bt: B11}   # not surface reflectance
+    qa_layer: Fmask
+
   HLSS30:
     provider: nasa_hls
     collection_short_name: HLSS30
-    description: Harmonized Sentinel-2 MSI surface reflectance (30 m)
-    spec_verified: false
+    description: Harmonized Sentinel-2 MSI surface reflectance (NBAR, bandpass-adjusted), 30 m MGRS tiles
+    spec_verified: true
+    spec_source: HLS User Guide V2.0, Table 7 and Table 1
+    file_pattern: "HLS.S30.{tile}.{datetime}.v2.0.{layer}.tif"
+    resolution_m: 30
+    bands:
+      coastal: B01
+      blue: B02
+      green: B03
+      red: B04       # MSI 4
+      rededge1: B05
+      rededge2: B06
+      rededge3: B07
+      nir_broad: B08
+      nir: B8A       # MSI 8A, NIR narrow: the band equivalent to OLI band 5 (use this, NOT B08, for NDVI/NDMI)
+      swir1: B11     # MSI 11, 1.57-1.66 um
+      swir2: B12     # MSI 12, 2.10-2.28 um
+    other_layers: {water_vapor_toa: B09, cirrus_toa: B10}
+    qa_layer: Fmask
+
+# Properties shared by HLS v2.0 reflectance layers (Tables 6 and 7)
+hls_v2:
+  reflectance:
+    dtype: int16
+    scale_factor: 0.0001        # reflectance = DN * scale_factor (+ offset, see below)
+    fill_value: -9999
+  # The guide lists ADD_OFFSET as a per-granule metadata attribute but gives no value.
+  # Pipeline rule: read scale/offset from the granule/COG metadata when present; otherwise
+  # use 0.0 and log a warning. Never assume silently.
+  offset_source: granule_metadata
+  fmask:
+    dtype: uint8
+    fill_value: 255            # all bits set: test for fill BEFORE decoding bits
+    # bit number -> meaning (Table 9). Bit 0 is the least significant bit.
+    bits:
+      0: {name: cirrus, note: "reserved, not used in HLS v2.0"}
+      1: {name: cloud}
+      2: {name: adjacent_to_cloud_shadow, note: "Fmask cloud/shadow dilated by 5 pixels"}
+      3: {name: cloud_shadow}
+      4: {name: snow_ice}
+      5: {name: water}
+    aot_bits: [6, 7]            # aerosol optical thickness level; not used for masking by default
+    # Bits 1-5 are not necessarily mutually exclusive (mixtures after resampling to 30 m).

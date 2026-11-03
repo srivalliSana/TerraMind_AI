@@ -37,6 +37,9 @@ data/manifests/*
 !data/samples/
 !data/samples/**
 
+# Local overrides written by the dashboard Settings page
+configs/local.yaml
+
 # Logs
 logs/
 *.log

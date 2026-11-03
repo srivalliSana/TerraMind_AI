@@ -20,6 +20,15 @@ def _circular_doy_distance(doy: np.ndarray, target: int) -> np.ndarray:
     return np.minimum(d, 365 - d)
 
 
+def _theil_sen_level(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
+    """Robust line fit y = level + slope * x; returns the level at x = 0 and the residuals."""
+    i, j = np.triu_indices(len(x), k=1)
+    ok = x[j] != x[i]
+    slope = float(np.median((y[j][ok] - y[i][ok]) / (x[j][ok] - x[i][ok]))) if ok.any() else 0.0
+    level = float(np.median(y - slope * x))
+    return level, y - (level + slope * x)
+
+
 def add_baseline(
     current: pd.DataFrame,
     history: pd.DataFrame,
@@ -28,6 +37,8 @@ def add_baseline(
     window_days: int = 15,
     min_obs: int = 5,
     sigma_floor: float = 0.03,
+    min_years: int = 1,
+    detrend: bool = False,
 ) -> pd.DataFrame:
     """Return ``current`` plus ``<col>_base_median``, ``<col>_base_sigma``, ``<col>_base_n``, ``<col>_z``.
 
@@ -49,9 +60,17 @@ def add_baseline(
         vals = h_val[mask]
         n = int(vals.size)
         yrs.append(int(np.unique(h_year[mask]).size))
-        if n >= min_obs:
-            med = float(np.median(vals))
-            sig = max(MAD_TO_SIGMA * float(np.median(np.abs(vals - med))), sigma_floor)
+        # Enough observations AND enough distinct years: one reference year cannot express year-to-year variability.
+        if n >= min_obs and yrs[-1] >= min_years:
+            if detrend:
+                # Remove the seasonal slope inside the window: otherwise a steep season (green-up / senescence)
+                # inflates the "normal variation" and hides real declines.
+                dx = ((h_doy[mask] - d.dayofyear + 182) % 365 - 182).astype(float)
+                med, resid = _theil_sen_level(dx, vals)
+                sig = max(MAD_TO_SIGMA * float(np.median(np.abs(resid - np.median(resid)))), sigma_floor)
+            else:
+                med = float(np.median(vals))
+                sig = max(MAD_TO_SIGMA * float(np.median(np.abs(vals - med))), sigma_floor)
             z = (x - med) / sig if np.isfinite(x) else np.nan
         else:
             med = sig = z = np.nan

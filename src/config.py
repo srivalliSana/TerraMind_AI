@@ -92,6 +92,8 @@ class TimeSeriesSettings(_Strict):
     min_observations_for_baseline: int = Field(5, ge=2)
     smoothing_window: int = Field(3, ge=1)
     rolling_window: int = Field(3, ge=1)
+    min_baseline_years: int = Field(2, ge=1)              # distinct earlier years required before any z-score is produced
+    detrend_baseline: bool = True                         # remove the seasonal slope inside the baseline window
     baseline_window_days: int = Field(15, ge=1, le=60)   # +/- days around the same day-of-year in other years
     sigma_floor: float = Field(0.03, gt=0)                # minimum baseline spread (index units) to avoid inflated z-scores
     gap_days: int = Field(20, ge=1)                       # gaps longer than this are flagged
@@ -166,10 +168,34 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def _local_override(cfg_dir: Path, section: str) -> dict[str, Any]:
+    """User overrides from ``local.yaml`` (gitignored), written by the dashboard Settings page.
+
+    Disabled by ``TERRAMIND_IGNORE_LOCAL_CONFIG=1`` (used by the test-suite for determinism).
+    """
+    if os.environ.get("TERRAMIND_IGNORE_LOCAL_CONFIG") == "1":
+        return {}
+    path = cfg_dir / "local.yaml"
+    if not path.is_file():
+        return {}
+    data = _read_yaml(path).get(section, {})
+    if not isinstance(data, dict):
+        raise ConfigError(f"'{section}' in {path} must be a mapping")
+    return data
+
+
 def load_settings(config_dir: Path | None = None) -> Settings:
-    """Load and validate ``default.yaml`` plus environment overrides."""
+    """Load and validate ``default.yaml`` + ``local.yaml`` overrides + environment overrides."""
     cfg_dir = Path(config_dir) if config_dir else CONFIG_DIR
-    raw = _apply_env_overrides(_read_yaml(cfg_dir / "default.yaml"))
+    raw = _deep_merge(_read_yaml(cfg_dir / "default.yaml"), _local_override(cfg_dir, "settings"))
+    raw = _apply_env_overrides(raw)
     try:
         return Settings.model_validate(raw)
     except ValidationError as exc:
@@ -180,7 +206,8 @@ def load_thresholds(config_dir: Path | None = None) -> Thresholds:
     """Load and validate ``thresholds.yaml``."""
     cfg_dir = Path(config_dir) if config_dir else CONFIG_DIR
     try:
-        return Thresholds.model_validate(_read_yaml(cfg_dir / "thresholds.yaml"))
+        raw = _deep_merge(_read_yaml(cfg_dir / "thresholds.yaml"), _local_override(cfg_dir, "thresholds"))
+        return Thresholds.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"Invalid thresholds in {cfg_dir / 'thresholds.yaml'}:\n{exc}") from exc
 
@@ -198,6 +225,44 @@ def load_sensors(config_dir: Path | None = None) -> dict[str, dict[str, Any]]:
 def get_settings() -> Settings:
     """Cached settings for application code."""
     return load_settings()
+
+
+def save_local_overrides(
+    settings: dict[str, Any] | None = None,
+    thresholds: dict[str, Any] | None = None,
+    config_dir: Path | None = None,
+) -> Path:
+    """Validate and persist user overrides to ``local.yaml`` (never touches the tracked defaults).
+
+    The merged result is validated BEFORE anything is written, so an invalid value cannot leave the
+    application with a broken configuration. Raises :class:`ConfigError` and writes nothing on failure.
+    """
+    cfg_dir = Path(config_dir) if config_dir else CONFIG_DIR
+    path = cfg_dir / "local.yaml"
+    existing = _read_yaml(path) if path.is_file() else {}
+    merged = {
+        "settings": _deep_merge(existing.get("settings", {}) or {}, settings or {}),
+        "thresholds": _deep_merge(existing.get("thresholds", {}) or {}, thresholds or {}),
+    }
+    try:
+        Settings.model_validate(_deep_merge(_read_yaml(cfg_dir / "default.yaml"), merged["settings"]))
+        Thresholds.model_validate(_deep_merge(_read_yaml(cfg_dir / "thresholds.yaml"), merged["thresholds"]))
+    except ValidationError as exc:
+        raise ConfigError(f"Rejected invalid configuration (nothing was saved):\n{exc}") from exc
+    tmp = path.with_suffix(".yaml.tmp")
+    tmp.write_text(yaml.safe_dump(merged, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+    get_settings.cache_clear()
+    return path
+
+
+def reset_local_overrides(config_dir: Path | None = None) -> bool:
+    """Delete ``local.yaml`` so defaults apply again. Returns True if a file was removed."""
+    path = (Path(config_dir) if config_dir else CONFIG_DIR) / "local.yaml"
+    existed = path.is_file()
+    path.unlink(missing_ok=True)
+    get_settings.cache_clear()
+    return existed
 
 
 def credential_status() -> dict[str, bool]:

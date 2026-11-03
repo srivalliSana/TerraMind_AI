@@ -39,6 +39,40 @@ def test_baseline_counts_distinct_years():
     assert r["ndvi_base_n"] == 5 and r["ndvi_base_years"] == 2
 
 
+def test_one_reference_year_is_not_a_baseline_when_two_required():
+    r = add_baseline(cur("2024-07-10", 0.74), H5, "ndvi", min_obs=5, min_years=2).iloc[0]
+    assert r["ndvi_base_n"] == 5 and r["ndvi_base_years"] == 1       # enough observations, but only one year
+    assert np.isnan(r["ndvi_z"]) and np.isnan(r["ndvi_base_median"])
+
+
+def _trend_history():
+    dates, vals = [], []
+    for year in (2022, 2023):
+        for day in range(182, 199, 4):                      # non-leap years: doy 182..198
+            dates.append(pd.Timestamp(f"{year}-01-01") + pd.Timedelta(days=day - 1))
+            vals.append(0.5 + 0.01 * (day - 190))           # perfectly linear season: +0.01 per day
+    return hist(dates, vals)
+
+
+def test_detrend_removes_seasonal_slope_from_baseline():
+    target = pd.Timestamp("2025-01-01") + pd.Timedelta(days=191)          # doy 192 in a non-leap year
+    plain = add_baseline(cur(target, 0.52), _trend_history(), "ndvi", min_obs=5).iloc[0]
+    trend = add_baseline(cur(target, 0.52), _trend_history(), "ndvi", min_obs=5, detrend=True).iloc[0]
+    assert trend["ndvi_base_median"] == pytest.approx(0.52, abs=1e-6)     # expected level exactly on the trend
+    assert trend["ndvi_z"] == pytest.approx(0.0, abs=1e-6)
+    assert trend["ndvi_base_sigma"] == pytest.approx(0.03)                # residual spread ~0 -> floor
+    assert plain["ndvi_base_sigma"] > trend["ndvi_base_sigma"]            # slope used to inflate the spread
+
+
+def test_detrend_makes_decline_detectable_where_plain_baseline_hides_it():
+    target = pd.Timestamp("2025-01-01") + pd.Timedelta(days=191)
+    drop = 0.52 - 0.12                                                    # 0.12 below the trend line
+    plain = add_baseline(cur(target, drop), _trend_history(), "ndvi", min_obs=5).iloc[0]["ndvi_z"]
+    trend = add_baseline(cur(target, drop), _trend_history(), "ndvi", min_obs=5, detrend=True).iloc[0]["ndvi_z"]
+    assert trend == pytest.approx(-4.0, abs=1e-6)                         # -0.12 / 0.03
+    assert abs(trend) > abs(plain)
+
+
 def test_baseline_uses_mad_when_larger_than_floor():
     h = hist(["2022-07-01", "2022-07-05", "2022-07-09", "2022-07-13", "2022-07-17"], [0.5, 0.6, 0.7, 0.8, 0.9])
     r = add_baseline(cur("2024-07-10", 0.4), h, "ndvi", min_obs=5, sigma_floor=0.03).iloc[0]

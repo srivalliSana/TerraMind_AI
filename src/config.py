@@ -127,6 +127,7 @@ class Thresholds(_Strict):
     affected_area: dict[str, float] = {}
     quality: dict[str, float] = {}
     risk_categories: dict[str, float] = {}
+    scoring: dict[str, float] = {}
 
     @model_validator(mode="after")
     def _check_ordering(self) -> "Thresholds":

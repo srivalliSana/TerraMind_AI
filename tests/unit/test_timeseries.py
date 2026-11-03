@@ -33,6 +33,12 @@ def test_baseline_median_sigma_floor_and_z():
     assert r["ndvi_z"] == pytest.approx(-2.0)
 
 
+def test_baseline_counts_distinct_years():
+    two_years = pd.concat([H5.iloc[:3], hist(["2023-07-05", "2023-07-09"], [0.8, 0.8])])
+    r = add_baseline(cur("2024-07-10", 0.8), two_years, "ndvi", min_obs=5).iloc[0]
+    assert r["ndvi_base_n"] == 5 and r["ndvi_base_years"] == 2
+
+
 def test_baseline_uses_mad_when_larger_than_floor():
     h = hist(["2022-07-01", "2022-07-05", "2022-07-09", "2022-07-13", "2022-07-17"], [0.5, 0.6, 0.7, 0.8, 0.9])
     r = add_baseline(cur("2024-07-10", 0.4), h, "ndvi", min_obs=5, sigma_floor=0.03).iloc[0]

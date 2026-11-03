@@ -307,6 +307,38 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_assess(args: argparse.Namespace) -> int:
+    """Produce an evidence-backed preliminary risk assessment for an AOI's latest observation."""
+    import json
+    from datetime import date
+
+    from src.alerts.risk_scoring import assess_risk
+    from src.pipeline.analysis import analyze_aoi
+
+    settings = config.get_settings()
+    df = analyze_aoi(settings.data_dir / "processed", args.aoi_id)
+    a = assess_risk(df, config.load_thresholds(), aoi_id=args.aoi_id,
+                    as_of=date.fromisoformat(args.as_of) if args.as_of else None,
+                    min_baseline_obs=settings.timeseries.min_observations_for_baseline)
+    print(f"AOI {a.aoi_id}  as of {a.as_of}\nCategory: {a.category.upper()}" +
+          (f"   score {a.score}/100   confidence {a.confidence} ({a.confidence_label})" if a.is_scored else "   (no score)"))
+    if a.is_scored:
+        print("Components: " + ", ".join(f"{k}={'n/a' if v is None else round(v, 1)}" for k, v in a.components.items()))
+    print("Evidence:")
+    for e in a.evidence:
+        print(f"  - {e}")
+    print(f"Observation dates: {', '.join(a.observation_dates) or '-'}")
+    print("Recommended follow-up:")
+    for r in a.recommendations:
+        print(f"  - {r}")
+    print(f"\nNOTE: {a.caveats[0]}\nThresholds validated against field data: {a.validated}")
+    out = settings.data_dir / "processed" / args.aoi_id / "risk_assessment.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(a.to_dict(), indent=2), encoding="utf-8")
+    print(f"wrote {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -351,6 +383,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("analyze", help="time series, seasonal baseline and anomaly flags for a processed AOI")
     p.add_argument("--aoi-id", required=True)
     p.set_defaults(func=cmd_analyze)
+
+    p = sub.add_parser("assess", help="preliminary risk assessment for an AOI's latest observation")
+    p.add_argument("--aoi-id", required=True)
+    p.add_argument("--as-of", help="YYYY-MM-DD reference date for staleness (default: latest observation)")
+    p.set_defaults(func=cmd_assess)
 
     p = sub.add_parser("auth-status", help="check NASA Earthdata authentication")
     p.add_argument("--verify", action="store_true", help="contact Earthdata to verify credentials")

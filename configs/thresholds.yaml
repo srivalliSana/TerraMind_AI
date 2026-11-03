@@ -19,6 +19,19 @@ quality:
   min_valid_fraction: 0.30
   low_confidence_below: 0.60
 
+scoring:                     # transparent, tunable weights (engineering defaults, not validated)
+  max_magnitude: 50          # points available for deviation from baseline
+  max_persistence: 30        # points for consecutive anomalous observations
+  max_extent: 20             # points for affected-area fraction (rescaled away when extent is unknown)
+  weight_ndvi: 1.0
+  weight_ndmi: 0.7           # moisture alone is weaker evidence of stress than greenness
+  persistence_full_obs: 4    # consecutive anomalous observations that earn full persistence points
+  stale_after_days: 30       # latest observation older than this lowers confidence
+  min_baseline_years: 3      # fewer distinct years than this caps confidence (a 1-2 year record is not a climatology)
+  confidence_cap_thin_baseline: 0.60
+  confidence_medium: 0.45
+  confidence_high: 0.70
+
 risk_categories:             # upper bounds of the 0-100 score
   informational: 25
   watch: 50

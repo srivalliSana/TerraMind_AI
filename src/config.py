@@ -72,6 +72,20 @@ class ProcessingSettings(_Strict):
     max_workers: int = Field(2, ge=1, le=64)
     download_retries: int = Field(3, ge=0, le=10)
     chunk_size: int = Field(1024, ge=64)
+    # Engineering default, not a validated rule: surface reflectance outside this range is treated as invalid.
+    reflectance_valid_range: tuple[float, float] = (-0.01, 1.0)
+    mask_cloud: bool = True
+    mask_adjacent: bool = True        # Fmask cloud/shadow dilated by 5 px
+    mask_shadow: bool = True
+    mask_snow_ice: bool = True
+    mask_water: bool = True           # water is not cropland; its NDVI would pollute field statistics
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "ProcessingSettings":
+        lo, hi = self.reflectance_valid_range
+        if not lo < hi:
+            raise ValueError("reflectance_valid_range must be (min, max) with min < max")
+        return self
 
 
 class TimeSeriesSettings(_Strict):

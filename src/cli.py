@@ -146,13 +146,7 @@ def cmd_auth_status(args: argparse.Namespace) -> int:
     return 0 if s.state in {"ok", "unchecked", "not_configured"} else 1
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
-    sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("check-env", help="verify environment, configuration and credentials")
-    p.set_defaults(func=cmd_check_env)
-
-    p = sub.add_parser("search", help="search satellite observations over an AOI")
+def _add_search_args(p: argparse.ArgumentParser) -> None:
     src_group = p.add_mutually_exclusive_group(required=True)
     src_group.add_argument("--bbox", nargs=4, type=float, metavar=("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"))
     src_group.add_argument("--aoi-file", help="GeoJSON or .shp file")
@@ -162,8 +156,74 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sensors", nargs="+", help="e.g. HLSL30 HLSS30 (default: all)")
     p.add_argument("--max-cloud", type=float, help="max tile cloud cover percent (default from config)")
     p.add_argument("--limit", type=int, help="max results per sensor (capped by config)")
+
+
+def cmd_download(args: argparse.Namespace) -> int:
+    """Download only the needed layers for the least-cloudy matching granules."""
+    from datetime import date
+
+    from src.data.download import download_granule, layers_for
+    from src.data.manifest import load_manifest
+    from src.data.providers.base import AuthError, ProviderError
+    from src.data.search import search_granules
+    from src.geospatial.aoi import AOIError
+    from src.storage.cache import is_cached_valid, layer_path
+
+    settings = config.get_settings()
+    raw_dir, manifest_dir = settings.data_dir / "raw", settings.data_dir / "manifests"
+    try:
+        aoi = _load_aoi(args)
+        result = search_granules(
+            aoi, date.fromisoformat(args.start), date.fromisoformat(args.end),
+            sensors=tuple(args.sensors) if args.sensors else None,
+            max_cloud_cover=args.max_cloud, max_results=args.limit,
+        )
+        chosen = sorted(result.granules, key=lambda g: (g.cloud_cover is None, g.cloud_cover or 0))[: args.max_granules]
+        if not chosen:
+            print("No matching granules; nothing to download.")
+            return 0
+        print(f"Plan: {len(chosen)} granule(s) (least cloudy first, cap {args.max_granules}); bands={args.bands} + Fmask")
+        for g in chosen:
+            layers = layers_for(g.sensor, tuple(args.bands))
+            man = load_manifest(manifest_dir, g.granule_id)
+            for layer in layers:
+                cached = is_cached_valid(layer_path(raw_dir, g, layer), man.files.get(layer) if man else None)
+                print(f"  {g.granule_id}  {layer:<6} {'cached' if cached else 'to download'}")
+        if args.dry_run:
+            print("\nDry run: nothing downloaded.")
+            return 0
+        for g in chosen:
+            m = download_granule(g, layers_for(g.sensor, tuple(args.bands)), raw_dir=raw_dir,
+                                 manifest_dir=manifest_dir, force=args.force)
+            print(f"ok {g.granule_id}: {len(m.files)} file(s), manifest data/manifests/{g.granule_id}.json")
+        return 0
+    except AuthError as exc:
+        print(f"Authentication problem (search works, download does not): {exc}", file=sys.stderr)
+        return 3
+    except (AOIError, ProviderError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("check-env", help="verify environment, configuration and credentials")
+    p.set_defaults(func=cmd_check_env)
+
+    p = sub.add_parser("search", help="search satellite observations over an AOI")
+    _add_search_args(p)
     p.add_argument("--json-out", help="write results to a JSON file")
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("download", help="download selected bands (+ Fmask) for observations over an AOI")
+    _add_search_args(p)
+    p.add_argument("--bands", nargs="+", default=["red", "nir", "swir1"],
+                   help="semantic band names (default: red nir swir1); Fmask is always added")
+    p.add_argument("--max-granules", type=int, default=3, help="safety cap on granules to download (default 3)")
+    p.add_argument("--dry-run", action="store_true", help="show the plan without downloading")
+    p.add_argument("--force", action="store_true", help="re-download even if cached")
+    p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("auth-status", help="check NASA Earthdata authentication")
     p.add_argument("--verify", action="store_true", help="contact Earthdata to verify credentials")

@@ -239,6 +239,74 @@ def cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_series(args: argparse.Namespace) -> int:
+    """Search, pick one granule per time slot, download and process over several date ranges."""
+    from datetime import date
+
+    from src.data.providers.base import AuthError, ProviderError
+    from src.geospatial.aoi import AOIError
+    from src.pipeline.orchestrator import run_series
+
+    settings = config.get_settings()
+    try:
+        aoi = _load_aoi(args)
+        ranges = []
+        for r in args.ranges:
+            a, _, b = r.partition(":")
+            ranges.append((date.fromisoformat(a), date.fromisoformat(b)))
+        report = run_series(
+            aoi, ranges, raw_dir=settings.data_dir / "raw", manifest_dir=settings.data_dir / "manifests",
+            out_root=settings.data_dir / "processed", sensors=tuple(args.sensors) if args.sensors else None,
+            slot_days=args.slot_days, max_granules=args.max_granules, dry_run=args.dry_run)
+    except AuthError as exc:
+        print(f"Authentication problem (search works, download does not): {exc}", file=sys.stderr)
+        return 3
+    except (AOIError, ProviderError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"AOI {aoi.id} '{aoi.name}' ({aoi.area_km2:.1f} km2)")
+    print(f"Planned {len(report.planned)} granule(s) (~{len(report.planned) * 46} MB for HLSS30):")
+    for g in report.planned:
+        print(f"  {g.acquired_date}  {g.sensor}  tile cloud {g.cloud_cover:.0f}%  coverage {g.spatial_coverage:.0f}%  {g.granule_id}")
+    for w in report.warnings:
+        print(f"warning: {w}")
+    if args.dry_run:
+        print("\nDry run: nothing downloaded or processed.")
+        return 0
+    print(f"\nProcessed {len(report.processed)}; failed/skipped {len(report.failed)}")
+    for gid, why in report.failed:
+        print(f"  skipped {gid}: {why}")
+    for p in report.processed:
+        flag = "ok " if p.usable_for_analysis else "LOW"
+        nd = p.stats.get("ndvi")
+        print(f"  [{flag}] {p.acquired[:10]} valid {p.quality.valid_fraction:.0%} NDVI median "
+              f"{'-' if nd is None else format(nd['median'], '.3f')}  {p.granule_id}")
+    return 0
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Build the AOI time series with seasonal baselines and anomaly flags."""
+    import pandas as pd
+
+    from src.pipeline.analysis import analyze_aoi
+
+    settings = config.get_settings()
+    df = analyze_aoi(settings.data_dir / "processed", args.aoi_id)
+    if df.empty:
+        print(f"No usable processed observations for {args.aoi_id}. Run 'run-series' first.", file=sys.stderr)
+        return 2
+    cols = ["date", "sensors", "valid_fraction", "ndvi", "ndvi_base_median", "ndvi_base_n", "ndvi_z", "ndvi_z_level",
+            "ndvi_z_run", "ndmi", "ndmi_z", "ndmi_z_level", "days_since_prev"]
+    with pd.option_context("display.width", 220, "display.max_columns", 30, "display.float_format", "{:.3f}".format):
+        print(df[cols].assign(date=df["date"].dt.date).to_string(index=False))
+    out = settings.data_dir / "processed" / args.aoi_id / "timeseries.csv"
+    df.to_csv(out, index=False)
+    print(f"\nwrote {out}")
+    print("Levels are PRELIMINARY statistical indicators vs. a seasonal baseline, not diagnoses of crop stress.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -267,6 +335,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--granule-id", required=True)
     p.add_argument("--indices", nargs="+", default=["ndvi", "ndmi"], choices=["ndvi", "ndmi", "evi"])
     p.set_defaults(func=cmd_process)
+
+    p = sub.add_parser("run-series", help="download+process one best granule per time slot over date ranges")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--bbox", nargs=4, type=float, metavar=("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"))
+    g.add_argument("--aoi-file", help="GeoJSON or .shp file")
+    p.add_argument("--name", help="AOI name")
+    p.add_argument("--ranges", nargs="+", required=True, metavar="START:END", help="e.g. 2023-07-01:2023-07-31")
+    p.add_argument("--sensors", nargs="+", help="e.g. HLSS30 (single sensor avoids cross-sensor differences)")
+    p.add_argument("--slot-days", type=int, default=7, help="keep one granule per this many days (default 7)")
+    p.add_argument("--max-granules", type=int, default=20, help="safety cap (default 20)")
+    p.add_argument("--dry-run", action="store_true", help="show the plan only")
+    p.set_defaults(func=cmd_run_series)
+
+    p = sub.add_parser("analyze", help="time series, seasonal baseline and anomaly flags for a processed AOI")
+    p.add_argument("--aoi-id", required=True)
+    p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("auth-status", help="check NASA Earthdata authentication")
     p.add_argument("--verify", action="store_true", help="contact Earthdata to verify credentials")

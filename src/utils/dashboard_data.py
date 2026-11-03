@@ -66,7 +66,7 @@ def load_real_context(settings: config.Settings | None = None) -> DataContext:
     """Open the database, register on-disk AOIs/observations (idempotent) and analyse each AOI."""
     s = settings or config.get_settings()
     root = s.data_dir / "processed"
-    conn = open_db(s.db_path)
+    conn = open_db(s.db_path, check_same_thread=False)
     t = config.load_thresholds()
     aois, daily, assessments, notes = {}, {}, {}, []
     for aid in processed_aoi_ids(root):

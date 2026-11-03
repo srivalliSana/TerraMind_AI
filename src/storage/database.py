@@ -128,11 +128,14 @@ CREATE TABLE evaluation_runs (
 MIGRATIONS: list[tuple[int, str]] = [(1, SCHEMA_V1)]
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    """Open a connection with foreign keys on and rows accessible by name."""
+def connect(path: str | Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    """Open a connection with foreign keys on and rows accessible by name.
+
+    Streamlit runs each rerun on a different thread, so the dashboard passes ``check_same_thread=False``.
+    """
     if str(path) != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if str(path) != ":memory:":
@@ -163,8 +166,8 @@ def migrate(conn: sqlite3.Connection) -> int:
     return version
 
 
-def open_db(path: str | Path) -> sqlite3.Connection:
+def open_db(path: str | Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
     """Connect and migrate to the latest schema."""
-    conn = connect(path)
+    conn = connect(path, check_same_thread=check_same_thread)
     migrate(conn)
     return conn

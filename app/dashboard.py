@@ -1,68 +1,45 @@
+"""TerraMind AI: home page. Launch with ``streamlit run app/dashboard.py``."""
+import sys
+from pathlib import Path
 
-import streamlit as st
-import pandas as pd
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import streamlit as st  # noqa: E402
 
-st.set_page_config(
-    page_title="TerraMind AI",
-    page_icon="🌱",
-    layout="wide"
+import _ui  # noqa: E402
+from src.utils import dashboard_data as dd  # noqa: E402
+
+_ui.setup("Home", ":material/satellite_alt:")
+ctx = _ui.get_context()
+_ui.header("TerraMind AI", "Satellite-based crop stress detection and early-warning intelligence")
+
+m = dd.overview_metrics(ctx)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Monitored AOIs", m["aois"])
+c2.metric("Observations", m["observations"])
+c3.metric("Latest observation", m["latest_observation"] or "none")
+c4.metric("Active alerts", m["active_alerts"])
+
+if not ctx.aois:
+    _ui.empty_state(ctx)
+
+st.subheader("Where to go")
+left, right = st.columns(2)
+with left:
+    st.page_link("pages/01_Global_Overview.py", label="Global Overview: map, status, activity", icon=":material/public:")
+    st.page_link("pages/02_AOI_Explorer.py", label="AOI Explorer: define an area, discover and process observations", icon=":material/draw:")
+    st.page_link("pages/03_Satellite_Observations.py", label="Satellite Observations: index maps and quality", icon=":material/layers:")
+    st.page_link("pages/04_Crop_Stress_Analysis.py", label="Crop Stress Analysis: time series, baseline, risk", icon=":material/monitoring:")
+with right:
+    st.page_link("pages/05_Alerts.py", label="Alerts: preliminary warnings with evidence", icon=":material/notifications:")
+    st.page_link("pages/06_Model_Performance.py", label="Model Performance: what has (and has not) been evaluated", icon=":material/fact_check:")
+    st.page_link("pages/07_Settings.py", label="Settings: limits, thresholds, credentials status", icon=":material/settings:")
+
+st.subheader("How to read the results")
+st.markdown(
+    "- **Observed** values are measurements from satellite imagery (NASA HLS), masked for cloud, shadow, snow and water.\n"
+    "- **Modelled** values (baselines, z-scores, risk scores) are statistics computed from those observations.\n"
+    "- Outputs are **potential stress indicators**. Satellite indices alone cannot diagnose disease, nutrient deficiency or the "
+    "exact cause of a change, and thresholds here are engineering defaults that have **not** been validated against field data.\n"
+    "- Coverage is limited to areas you have actually processed; this is not a global monitoring service."
 )
-
-st.title("🌱 TerraMind AI")
-st.subheader("Satellite-Based Crop Stress Early Warning System")
-
-st.info(
-    "Upload satellite-derived NDVI and NDMI data "
-    "to inspect vegetation changes."
-)
-
-uploaded_file = st.file_uploader(
-    "Upload CSV file",
-    type=["csv"]
-)
-
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-
-    required_columns = {"date", "ndvi", "ndmi"}
-
-    if not required_columns.issubset(df.columns):
-        st.error("CSV must contain date, ndvi, and ndmi columns.")
-
-    elif df.empty:
-        st.warning("The uploaded CSV is empty.")
-
-    else:
-        df["ndvi"] = pd.to_numeric(df["ndvi"], errors="coerce")
-        df["ndmi"] = pd.to_numeric(df["ndmi"], errors="coerce")
-
-        st.subheader("📊 Dataset Preview")
-        st.dataframe(df, use_container_width=True)
-
-        st.subheader("Dataset Summary")
-        st.dataframe(df[["ndvi", "ndmi"]].describe(),
-                     use_container_width=True)
-
-        st.subheader("📈 Vegetation Trends")
-        st.caption("Demo data only — not a real satellite-based crop stress assessment.")
-        st.line_chart(df.set_index("date")[["ndvi", "ndmi"]])
-
-        valid_df = df.dropna(subset=["ndvi", "ndmi"])
-
-        if not valid_df.empty:
-            latest = valid_df.iloc[-1]
-
-            col1, col2 = st.columns(2)
-            col1.metric("Latest NDVI", f"{latest['ndvi']:.2f}")
-            col2.metric("Latest NDMI", f"{latest['ndmi']:.2f}")
-
-            if valid_df["ndvi"].iloc[-1] < valid_df["ndvi"].iloc[0]:
-                st.warning(
-                    "NDVI declined across the available observations. "
-                    "Further investigation may be needed."
-                )
-            else:
-                st.success(
-                    "No NDVI decline detected between the first "
-                    "and last valid observations."
-                )
+_ui.prelim_note()

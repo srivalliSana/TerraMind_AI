@@ -78,7 +78,7 @@ def build_demo_db(demo: list[DemoAOI] | None = None) -> tuple[sqlite3.Connection
     demo = demo or build_demo()
     t = config.load_thresholds()
     min_obs = config.get_settings().timeseries.min_observations_for_baseline
-    conn = open_db(":memory:")
+    conn = open_db(":memory:", check_same_thread=False)
     state = {"day": "2024-06-01"}
     mgr = AlertManager(conn, clock=lambda: f"{state['day']}T12:00:00+00:00")
     for d in demo:

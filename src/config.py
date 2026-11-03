@@ -92,6 +92,9 @@ class TimeSeriesSettings(_Strict):
     min_observations_for_baseline: int = Field(5, ge=2)
     smoothing_window: int = Field(3, ge=1)
     rolling_window: int = Field(3, ge=1)
+    baseline_window_days: int = Field(15, ge=1, le=60)   # +/- days around the same day-of-year in other years
+    sigma_floor: float = Field(0.03, gt=0)                # minimum baseline spread (index units) to avoid inflated z-scores
+    gap_days: int = Field(20, ge=1)                       # gaps longer than this are flagged
 
 
 class Settings(_Strict):

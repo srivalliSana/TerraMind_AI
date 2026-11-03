@@ -205,6 +205,40 @@ def cmd_download(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_process(args: argparse.Namespace) -> int:
+    """Clip, mask and compute indices for an already-downloaded granule over an AOI."""
+    from src.data.manifest import load_manifest
+    from src.geospatial.aoi import AOIError
+    from src.geospatial.raster_io import RasterError
+    from src.pipeline.jobs import ProcessingError, process_granule
+
+    settings = config.get_settings()
+    try:
+        aoi = _load_aoi(args)
+        manifest = load_manifest(settings.data_dir / "manifests", args.granule_id)
+        if manifest is None:
+            print(f"No manifest for {args.granule_id}. Download it first with the 'download' command.", file=sys.stderr)
+            return 2
+        res = process_granule(manifest, aoi, raw_dir=settings.data_dir / "raw", out_root=settings.data_dir / "processed",
+                              indices=tuple(args.indices))
+    except (AOIError, ProcessingError, RasterError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    q = res.quality
+    print(f"{res.granule_id} over AOI {res.aoi_id} -> {res.output_dir}")
+    print(f"  AOI pixels: {q.aoi_pixels}; observed {q.observed_fraction:.1%}, valid {q.valid_fraction:.1%} "
+          f"(cloud {q.cloud_fraction:.1%}, adjacent {q.adjacent_fraction:.1%}, shadow {q.shadow_fraction:.1%}, "
+          f"snow/ice {q.snow_ice_fraction:.1%}, water {q.water_fraction:.1%}, no-data {q.fill_fraction:.1%})")
+    for name, s in res.stats.items():
+        print(f"  {name.upper()}: " + ("no valid pixels" if s is None else
+              f"mean {s['mean']:.3f}, median {s['median']:.3f}, std {s['std']:.3f}, p10-p90 {s['p10']:.3f}..{s['p90']:.3f} (n={s['count']})"))
+    for w in res.warnings:
+        print(f"  warning: {w}")
+    print(f"  usable for analysis: {res.usable_for_analysis}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -224,6 +258,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="show the plan without downloading")
     p.add_argument("--force", action="store_true", help="re-download even if cached")
     p.set_defaults(func=cmd_download)
+
+    p = sub.add_parser("process", help="clip, mask and compute indices for a downloaded granule")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--bbox", nargs=4, type=float, metavar=("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"))
+    g.add_argument("--aoi-file", help="GeoJSON or .shp file")
+    p.add_argument("--name", help="AOI name")
+    p.add_argument("--granule-id", required=True)
+    p.add_argument("--indices", nargs="+", default=["ndvi", "ndmi"], choices=["ndvi", "ndmi", "evi"])
+    p.set_defaults(func=cmd_process)
 
     p = sub.add_parser("auth-status", help="check NASA Earthdata authentication")
     p.add_argument("--verify", action="store_true", help="contact Earthdata to verify credentials")

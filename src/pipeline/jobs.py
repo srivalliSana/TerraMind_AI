@@ -155,6 +155,8 @@ def process_granule(
                         "excluded from analysis by default.")
 
     out_dir = Path(out_root) / aoi.id / manifest.granule_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (Path(out_root) / aoi.id / "aoi.geojson").write_text(json.dumps(aoi.to_geojson()), encoding="utf-8")  # reload AOI by id
     meta0 = metas["red"]
     provenance = {"granule_id": manifest.granule_id, "sensor": manifest.sensor, "acquired": manifest.acquired,
                   "aoi_id": aoi.id, "pipeline_version": PIPELINE_VERSION, "caveat": INDEX_CAVEAT}

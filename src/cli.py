@@ -339,6 +339,66 @@ def cmd_assess(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_alerts(args: argparse.Namespace) -> int:
+    """Evaluate, list, dismiss, resolve and export PRELIMINARY crop-stress alerts."""
+    import json
+    from datetime import date
+
+    from src.alerts.alert_manager import AlertManager
+    from src.alerts.risk_scoring import assess_risk
+    from src.geospatial import aoi as aoi_mod
+    from src.pipeline.analysis import analyze_aoi
+    from src.storage import repositories as repo
+    from src.storage.database import open_db
+
+    settings = config.get_settings()
+    conn = open_db(settings.db_path)
+    mgr = AlertManager(conn)
+    try:
+        if args.action == "evaluate":
+            aoi = repo.get_aoi(conn, args.aoi_id)
+            if aoi is None:
+                path = settings.data_dir / "processed" / args.aoi_id / "aoi.geojson"
+                if not path.is_file():
+                    print(f"Unknown AOI {args.aoi_id}. Run 'process' or 'run-series' for it first.", file=sys.stderr)
+                    return 2
+                aoi = aoi_mod.from_geojson(path)
+            repo.upsert_aoi(conn, aoi)
+            n = repo.sync_processed_dir(conn, settings.data_dir / "processed", aoi.id)
+            df = analyze_aoi(settings.data_dir / "processed", aoi.id)
+            a = assess_risk(df, config.load_thresholds(), aoi_id=aoi.id,
+                            min_baseline_obs=settings.timeseries.min_observations_for_baseline)
+            res = mgr.process(a)
+            print(f"recorded {n} observation(s); assessment {a.category.upper()}"
+                  + (f" (score {a.score}, confidence {a.confidence_label})" if a.is_scored else "")
+                  + f" -> alert action: {res.action}" + (f" [{res.alert_id}]" if res.alert_id else ""))
+            print("(preliminary indicator; not validated against field observations)")
+        elif args.action == "list":
+            rows = mgr.list(status=args.status, aoi_id=args.aoi_id, category=args.category)
+            if not rows:
+                print("No alerts match.")
+            for r in rows:
+                print(f"{r['id']}  {r['status']:<9} {r['category']:<9} score {r['score']}  {r['aoi_name']}  "
+                      f"{r['first_seen']} -> {r['last_seen']}")
+        elif args.action in ("dismiss", "resolve"):
+            getattr(mgr, args.action)(args.alert_id, args.note)
+            print(f"{args.alert_id}: {args.action}ed")
+        elif args.action == "export":
+            filters = {"status": args.status, "aoi_id": args.aoi_id, "category": args.category}
+            out = Path(args.out)
+            if args.format == "csv":
+                out.write_text(mgr.export_csv(**filters), encoding="utf-8", newline="")
+            else:
+                out.write_text(json.dumps(mgr.export_geojson(**filters), indent=2), encoding="utf-8")
+            print(f"wrote {out}")
+    except (KeyError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        conn.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="terramind", description="TerraMind AI command-line tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -388,6 +448,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--aoi-id", required=True)
     p.add_argument("--as-of", help="YYYY-MM-DD reference date for staleness (default: latest observation)")
     p.set_defaults(func=cmd_assess)
+
+    p = sub.add_parser("alerts", help="evaluate / list / dismiss / resolve / export preliminary alerts")
+    asub = p.add_subparsers(dest="action", required=True)
+    q = asub.add_parser("evaluate", help="assess an AOI and create/update/resolve its alert")
+    q.add_argument("--aoi-id", required=True)
+    q = asub.add_parser("list")
+    q.add_argument("--status", choices=["active", "resolved", "dismissed"])
+    q.add_argument("--aoi-id")
+    q.add_argument("--category", choices=["watch", "elevated", "high", "informational"])
+    for name in ("dismiss", "resolve"):
+        q = asub.add_parser(name)
+        q.add_argument("alert_id")
+        q.add_argument("--note")
+    q = asub.add_parser("export")
+    q.add_argument("--format", choices=["csv", "geojson"], default="csv")
+    q.add_argument("--out", required=True)
+    q.add_argument("--status", choices=["active", "resolved", "dismissed"])
+    q.add_argument("--aoi-id")
+    q.add_argument("--category", choices=["watch", "elevated", "high", "informational"])
+    p.set_defaults(func=cmd_alerts)
 
     p = sub.add_parser("auth-status", help="check NASA Earthdata authentication")
     p.add_argument("--verify", action="store_true", help="contact Earthdata to verify credentials")

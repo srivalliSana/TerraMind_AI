@@ -34,6 +34,8 @@ timeseries:
   rolling_window: 3
   min_baseline_years: 2      # distinct earlier years required before any z-score is produced
   detrend_baseline: true     # remove the seasonal slope inside the baseline window (robust Theil-Sen)
+  pixel_sigma_floor: 0.05    # single pixels are noisier than the AOI median
+  min_patch_pixels: 9        # connected affected pixels needed to count (9 px = 0.81 ha at 30 m)
   baseline_window_days: 15   # +/- days around the same day-of-year in other years
   sigma_floor: 0.03          # minimum baseline spread (index units); engineering default
   gap_days: 20               # gaps longer than this are flagged

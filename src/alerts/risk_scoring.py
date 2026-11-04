@@ -77,6 +77,7 @@ def assess_risk(
     affected_fraction: float | None = None,
     as_of: date | None = None,
     min_baseline_obs: int = 5,
+    extent_note: str | None = None,
 ) -> RiskAssessment:
     """Assess the latest observation of an analysed series (output of ``analyze_aoi``)."""
     s = t.scoring
@@ -131,8 +132,8 @@ def assess_risk(
                             f"observations" + (f" in {int(last[f'{idx}_base_years'])} year(s))" if f"{idx}_base_years" in last else ")"))
     evidence.append(f"{run} consecutive anomalous observation(s)" if run else "latest observation is not anomalous")
     evidence.append(f"{quality['valid_fraction']:.0%} of the AOI valid (cloud/shadow/snow/water excluded)")
-    evidence.append("affected area: " + (f"{affected_fraction:.0%} of valid pixels" if affected_fraction is not None
-                                         else "not assessed (AOI-level statistics only)"))
+    evidence.append("affected area: " + (f"{affected_fraction:.0%} of valid pixels" + (f" ({extent_note})" if extent_note else "")
+                                         if affected_fraction is not None else "not assessed (AOI-level statistics only)"))
     dates = [pd.Timestamp(d).date().isoformat() for d in daily["date"].iloc[-max(run, 1):]]
 
     # --- confidence (heuristic) ---------------------------------------------------------------------

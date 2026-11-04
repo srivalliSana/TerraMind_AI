@@ -47,6 +47,9 @@ logs/
 # Databases
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 *.db
 
 # Model artifacts (model cards are tracked)

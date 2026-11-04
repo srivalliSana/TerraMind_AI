@@ -11,6 +11,7 @@ anomaly:
   min_persistence_obs: 2     # consecutive anomalous observations to count as sustained
 
 affected_area:
+  pixel_zscore: -2.0         # a pixel counts as affected at or below this z (about 2.3% expected by chance in a normal year)
   min_fraction_watch: 0.05
   min_fraction_elevated: 0.15
   min_fraction_high: 0.30

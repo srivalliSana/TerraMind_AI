@@ -16,10 +16,10 @@ import rasterio
 from rasterio.warp import transform_bounds
 
 from src import config
-from src.alerts.risk_scoring import RiskAssessment, assess_risk
+from src.alerts.risk_scoring import RiskAssessment
 from src.geospatial import aoi as aoi_mod
 from src.geospatial.aoi import AOI
-from src.pipeline.analysis import analyze_aoi
+from src.pipeline.assessment import assess_aoi
 from src.storage import repositories as repo
 from src.storage.database import open_db
 from src.utils import demo_data
@@ -43,6 +43,7 @@ class DataContext:
     assessments: dict[str, RiskAssessment]
     processed_root: Path | None = None
     notes: list[str] = field(default_factory=list)
+    extents: dict[str, object] = field(default_factory=dict)      # aoi_id -> ExtentResult (real mode only)
 
     @property
     def is_demo(self) -> bool:
@@ -67,20 +68,18 @@ def load_real_context(settings: config.Settings | None = None) -> DataContext:
     s = settings or config.get_settings()
     root = s.data_dir / "processed"
     conn = open_db(s.db_path, check_same_thread=False)
-    t = config.load_thresholds()
-    aois, daily, assessments, notes = {}, {}, {}, []
+    aois, daily, assessments, extents, notes = {}, {}, {}, {}, []
     for aid in processed_aoi_ids(root):
         try:
             aoi = aoi_mod.from_geojson(root / aid / "aoi.geojson")
             repo.upsert_aoi(conn, aoi)
             repo.sync_processed_dir(conn, root, aoi.id)
-            df = analyze_aoi(root, aoi.id)
-            aois[aoi.id], daily[aoi.id] = aoi, df
-            assessments[aoi.id] = assess_risk(df, t, aoi_id=aoi.id,
-                                              min_baseline_obs=s.timeseries.min_observations_for_baseline)
+            res = assess_aoi(root, aoi.id)
+            aois[aoi.id], daily[aoi.id] = aoi, res.daily
+            assessments[aoi.id], extents[aoi.id] = res.assessment, res.extent
         except Exception as exc:  # noqa: BLE001 - one broken AOI must not take the dashboard down
             notes.append(f"Could not load AOI {aid}: {exc}")
-    return DataContext("real", conn, aois, daily, assessments, root, notes)
+    return DataContext("real", conn, aois, daily, assessments, root, notes, extents)
 
 
 def load_demo_context() -> DataContext:

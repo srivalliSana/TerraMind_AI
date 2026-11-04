@@ -307,19 +307,45 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extent(args: argparse.Namespace) -> int:
+    """Per-pixel anomaly map: which parts of the AOI are well below their own seasonal normal."""
+    from src.pipeline.extent import compute_extent
+
+    settings = config.get_settings()
+    r = compute_extent(settings.data_dir / "processed", args.aoi_id, target_granule=args.granule_id)
+    if not r.ok:
+        print(f"Affected-area analysis unavailable: {r.reason}")
+        for w in r.warnings:
+            print(f"  warning: {w}")
+        return 2
+    print(f"{r.target_granule} ({r.target_date}) vs {len(r.history_granules)} earlier observation(s) from {r.history_years} year(s), "
+          f"seasonal window +/-{r.window_days} d")
+    print(f"  pixels evaluated      : {r.evaluated_pixels}")
+    print(f"  below z <= {r.pixel_zscore}      : {r.raw_affected_pixels} pixels ({r.raw_affected_pixels / r.evaluated_pixels:.1%}); "
+          f"about {r.expected_by_chance:.1%} expected by chance")
+    print(f"  in patches >= {r.min_patch_pixels} px  : {r.affected_pixels} pixels = {r.affected_fraction:.1%} of valid area, "
+          f"{r.area_ha:.1f} ha, {r.patches} patch(es), largest {r.largest_patch_pixels} px")
+    print(f"  area-wide seasonal slope removed: {r.area_slope_per_day:+.4f} NDVI/day")
+    for w in r.warnings:
+        print(f"  warning: {w}")
+    print(f"  wrote anomaly_z.tif, affected_mask.tif, extent.json in {r.output_dir}")
+    print(f"Caveat: {r.caveat}")
+    return 0
+
+
 def cmd_assess(args: argparse.Namespace) -> int:
     """Produce an evidence-backed preliminary risk assessment for an AOI's latest observation."""
     import json
     from datetime import date
 
-    from src.alerts.risk_scoring import assess_risk
-    from src.pipeline.analysis import analyze_aoi
+    from src.pipeline.assessment import assess_aoi
 
     settings = config.get_settings()
-    df = analyze_aoi(settings.data_dir / "processed", args.aoi_id)
-    a = assess_risk(df, config.load_thresholds(), aoi_id=args.aoi_id,
-                    as_of=date.fromisoformat(args.as_of) if args.as_of else None,
-                    min_baseline_obs=settings.timeseries.min_observations_for_baseline)
+    res = assess_aoi(settings.data_dir / "processed", args.aoi_id, with_extent=not args.no_extent,
+                     as_of=date.fromisoformat(args.as_of) if args.as_of else None)
+    a = res.assessment
+    if res.extent is not None and not res.extent.ok:
+        print(f"(affected-area map unavailable: {res.extent.reason})")
     print(f"AOI {a.aoi_id}  as of {a.as_of}\nCategory: {a.category.upper()}" +
           (f"   score {a.score}/100   confidence {a.confidence} ({a.confidence_label})" if a.is_scored else "   (no score)"))
     if a.is_scored:
@@ -345,9 +371,8 @@ def cmd_alerts(args: argparse.Namespace) -> int:
     from datetime import date
 
     from src.alerts.alert_manager import AlertManager
-    from src.alerts.risk_scoring import assess_risk
     from src.geospatial import aoi as aoi_mod
-    from src.pipeline.analysis import analyze_aoi
+    from src.pipeline.assessment import assess_aoi
     from src.storage import repositories as repo
     from src.storage.database import open_db
 
@@ -365,9 +390,7 @@ def cmd_alerts(args: argparse.Namespace) -> int:
                 aoi = aoi_mod.from_geojson(path)
             repo.upsert_aoi(conn, aoi)
             n = repo.sync_processed_dir(conn, settings.data_dir / "processed", aoi.id)
-            df = analyze_aoi(settings.data_dir / "processed", aoi.id)
-            a = assess_risk(df, config.load_thresholds(), aoi_id=aoi.id,
-                            min_baseline_obs=settings.timeseries.min_observations_for_baseline)
+            a = assess_aoi(settings.data_dir / "processed", aoi.id).assessment
             res = mgr.process(a)
             print(f"recorded {n} observation(s); assessment {a.category.upper()}"
                   + (f" (score {a.score}, confidence {a.confidence_label})" if a.is_scored else "")
@@ -447,7 +470,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("assess", help="preliminary risk assessment for an AOI's latest observation")
     p.add_argument("--aoi-id", required=True)
     p.add_argument("--as-of", help="YYYY-MM-DD reference date for staleness (default: latest observation)")
+    p.add_argument("--no-extent", action="store_true", help="skip the per-pixel affected-area analysis")
     p.set_defaults(func=cmd_assess)
+
+    p = sub.add_parser("extent", help="per-pixel anomaly map and affected area for an AOI's latest observation")
+    p.add_argument("--aoi-id", required=True)
+    p.add_argument("--granule-id", help="analyse this observation instead of the latest")
+    p.set_defaults(func=cmd_extent)
 
     p = sub.add_parser("alerts", help="evaluate / list / dismiss / resolve / export preliminary alerts")
     asub = p.add_subparsers(dest="action", required=True)

@@ -94,6 +94,8 @@ class TimeSeriesSettings(_Strict):
     rolling_window: int = Field(3, ge=1)
     min_baseline_years: int = Field(2, ge=1)              # distinct earlier years required before any z-score is produced
     detrend_baseline: bool = True                         # remove the seasonal slope inside the baseline window
+    pixel_sigma_floor: float = Field(0.05, gt=0)          # single pixels are noisier than the AOI median
+    min_patch_pixels: int = Field(9, ge=1)                # connected affected pixels needed to count (9 px = 0.81 ha at 30 m)
     baseline_window_days: int = Field(15, ge=1, le=60)   # +/- days around the same day-of-year in other years
     sigma_floor: float = Field(0.03, gt=0)                # minimum baseline spread (index units) to avoid inflated z-scores
     gap_days: int = Field(20, ge=1)                       # gaps longer than this are flagged

@@ -26,6 +26,7 @@ def load_observations(processed_root: Path, aoi_id: str, indices: tuple[str, ...
                 "date": pd.Timestamp(s["acquired"]).tz_convert("UTC").tz_localize(None).normalize(),
                 "granule_id": s["granule_id"], "sensor": s["sensor"],
                 "valid_fraction": s["quality"]["valid_fraction"], "usable": bool(s["usable_for_analysis"]),
+                "output_dir": str(path.parent),
             }
             for idx in indices:
                 st = (s.get("index_stats") or {}).get(idx)
@@ -35,7 +36,7 @@ def load_observations(processed_root: Path, aoi_id: str, indices: tuple[str, ...
             rows.append(row)
         except (KeyError, ValueError, json.JSONDecodeError) as exc:
             log.warning("Skipping unreadable summary %s: %s", path, exc)
-    cols = ["date", "granule_id", "sensor", "valid_fraction", "usable"] + [
+    cols = ["date", "granule_id", "sensor", "valid_fraction", "usable", "output_dir"] + [
         c for idx in indices for c in (f"{idx}_median", f"{idx}_std", f"n_{idx}")]
     return pd.DataFrame(rows, columns=cols).sort_values("date").reset_index(drop=True)
 

@@ -3,6 +3,7 @@
 Three situations are covered for each page: demo mode, real mode with an empty data directory, and real mode
 with SYNTHETIC processed outputs. The goal is "renders without exceptions and shows the right honest state".
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,45 @@ def real_data(tmp_path, monkeypatch, _aoi_fixture):
     process_granule(manifest, _aoi_fixture, raw_dir=raw, out_root=tmp_path / "data" / "processed")
     yield tmp_path / "data"
     config.get_settings.cache_clear()
+
+
+@pytest.fixture
+def real_with_extent(tmp_path, monkeypatch):
+    """Real-mode data with enough SYNTHETIC history for the per-pixel affected-area analysis (a 10x10 px decline)."""
+    import numpy as np
+
+    from tests.integration.test_extent import healthy, write_obs
+
+    monkeypatch.setenv("TERRAMIND_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TERRAMIND_DB_PATH", str(tmp_path / "data" / "t.sqlite"))
+    config.get_settings.cache_clear()
+    aoi = A.from_bbox(-93.7, 41.9, -93.6, 42.0, name="synthetic-extent")
+    root = tmp_path / "data" / "processed"
+    (root / aoi.id).mkdir(parents=True)
+    (root / aoi.id / "aoi.geojson").write_text(json.dumps(aoi.to_geojson()))
+    rng = np.random.default_rng(11)
+    for year in (2022, 2023):
+        for day in ("07-10", "07-15", "07-20"):
+            write_obs(root, f"{year}-{day}", healthy(rng), aoi=aoi.id)
+    arr = healthy(rng)
+    arr[:10, :10] -= 0.3
+    write_obs(root, "2024-07-15", arr, aoi=aoi.id)
+    yield aoi
+    config.get_settings.cache_clear()
+
+
+def test_stress_page_shows_affected_area_when_history_allows(real_with_extent):
+    at = run("pages/04_Crop_Stress_Analysis.py", "Real data")
+    assert not at.exception, [e.value for e in at.exception]
+    labels = {m.label: m.value for m in at.metric}
+    assert labels["Affected area"] == "6.2%" and labels["Patches"] == "1"          # 100 of 1600 pixels
+    assert any("different crop" in w.value for w in at.warning)                     # rotation caveat is shown
+
+
+def test_stress_page_explains_when_extent_unavailable(real_data):
+    at = run("pages/04_Crop_Stress_Analysis.py", "Real data")
+    assert not at.exception
+    assert any("No per-pixel anomaly map" in i.value for i in at.info)
 
 
 @pytest.mark.parametrize("page", PAGES)

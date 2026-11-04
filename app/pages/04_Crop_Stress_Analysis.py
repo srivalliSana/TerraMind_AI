@@ -83,7 +83,51 @@ else:
         st.dataframe(daily, hide_index=True, use_container_width=True)
         st.download_button("Download series (CSV)", daily.to_csv(index=False).encode("utf-8"), f"{aid}_timeseries.csv", "text/csv")
 
-st.subheader("Anomaly map")
-st.info("A per-pixel anomaly map needs pixel-level seasonal baselines, which are not implemented yet. Until then, assessments use "
-        "AOI-level statistics (hence \"affected area: not assessed\"). Index maps for single dates are on the Satellite Observations page.")
+st.subheader("Anomaly map and affected area")
+ext = ctx.extents.get(aid)
+if ctx.is_demo:
+    st.info("Demo mode has no imagery, so there is no per-pixel map. Switch to **Real data** to see one.")
+elif ext is None or not ext.ok:
+    reason = ext.reason if ext is not None else "no usable observations"
+    st.info(f"No per-pixel anomaly map: {reason}. A pixel baseline needs observations from at least two earlier years in the "
+            "same season, on the same pixel grid.")
+else:
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("Affected area", f"{ext.affected_fraction:.1%}", help=f"Valid pixels in connected patches of at least {ext.min_patch_pixels} pixels with z ≤ {ext.pixel_zscore}")
+    e2.metric("Affected land", f"{ext.area_ha:,.0f} ha")
+    e3.metric("Patches", ext.patches, help=f"Largest patch: {ext.largest_patch_pixels} pixels")
+    e4.metric("Expected by chance", f"{ext.expected_by_chance:.1%}", help="Share of pixels below the threshold in a normal year if the baseline were exact")
+    raw = ext.raw_affected_pixels / ext.evaluated_pixels
+    if raw <= ext.expected_by_chance * 1.5:
+        st.success(f"{raw:.1%} of pixels are below the threshold, close to the {ext.expected_by_chance:.1%} expected by chance: "
+                   "no widespread decline stands out.")
+    out = Path(ext.output_dir)
+    z_path = out / "anomaly_z.tif"
+    if z_path.is_file():
+        import folium
+        from streamlit_folium import st_folium
+
+        rgba, bounds = dd.raster_overlay(z_path, "RdBu", -4.0, 4.0)
+        amap = _ui.base_map()
+        folium.raster_layers.ImageOverlay(image=rgba, bounds=bounds, name="pixel z-score (red = below normal)", opacity=0.85).add_to(amap)
+        mask_path = out / "affected_mask.tif"
+        if mask_path.is_file():
+            import numpy as np
+            import rasterio
+            from rasterio.warp import transform_bounds
+
+            with rasterio.open(mask_path) as ms:
+                mk = ms.read(1)
+                w, s_, e, n = transform_bounds(ms.crs, "EPSG:4326", *ms.bounds)
+            ov = np.zeros(mk.shape + (4,), dtype=np.uint8)
+            ov[mk == 1] = (255, 200, 0, 230)
+            folium.raster_layers.ImageOverlay(image=ov, bounds=[[s_, w], [n, e]], name="affected patches", opacity=1.0).add_to(amap)
+        _ui.fit(amap, bounds)
+        folium.LayerControl(collapsed=False).add_to(amap)
+        st_folium(amap, height=480, use_container_width=True, returned_objects=[], key=f"anomaly_map_{aid}")
+        st.caption(f"Colour = z-score of each pixel vs the same place in {ext.history_years} earlier year(s), {len(ext.history_granules)} observations "
+                   f"within ±{ext.window_days} days of {ext.target_date}. Blue = above normal, red = below. Yellow = affected patches.")
+    st.warning(ext.caveat)
+    for w in ext.warnings:
+        st.caption(f"warning: {w}")
 _ui.prelim_note()

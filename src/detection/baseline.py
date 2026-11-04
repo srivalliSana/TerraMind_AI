@@ -20,13 +20,18 @@ def _circular_doy_distance(doy: np.ndarray, target: int) -> np.ndarray:
     return np.minimum(d, 365 - d)
 
 
-def _theil_sen_level(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
-    """Robust line fit y = level + slope * x; returns the level at x = 0 and the residuals."""
+def theil_sen(x: np.ndarray, y: np.ndarray) -> tuple[float, float, np.ndarray]:
+    """Robust line fit y = level + slope * x. Returns (slope, level at x = 0, residuals)."""
     i, j = np.triu_indices(len(x), k=1)
     ok = x[j] != x[i]
     slope = float(np.median((y[j][ok] - y[i][ok]) / (x[j][ok] - x[i][ok]))) if ok.any() else 0.0
     level = float(np.median(y - slope * x))
-    return level, y - (level + slope * x)
+    return slope, level, y - (level + slope * x)
+
+
+def _theil_sen_level(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
+    _, level, resid = theil_sen(x, y)
+    return level, resid
 
 
 def add_baseline(
